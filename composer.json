@@ -54,6 +54,13 @@
             "@php artisan config:clear --ansi",
             "@php artisan test"
         ],
+        "lint": [
+            "pint --parallel"
+        ],
+        "kit:run": [
+            "Composer\\Config::disableProcessTimeout",
+            "cd build && composer setup && composer dev"
+        ],
         "post-autoload-dump": [
             "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",
             "@php artisan package:discover --ansi"

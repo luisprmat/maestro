@@ -35,6 +35,10 @@ php artisan build --kit=vue # Builds the Vue starter kit
 php artisan build --kit=react --workos # Builds the WorkOS variant for the React starter kit
 ```
 
+When building a **WorkOS** variant for a starter kit, you can add your **WorkOS** client ID and the
+API key in the root `.env` file, with this, when running the `./run-kit.sh` script, it will copy these
+values to the built starter kit.
+
 ## Running the built starter kit
 
 You can use this script, that will run the built starter kit in the `http://localhost:8000`:

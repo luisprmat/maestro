@@ -15,6 +15,11 @@ use function Laravel\Prompts\select;
 class BuildCommand extends Command
 {
     /**
+     * The path where the starter kit will be built.
+     */
+    protected const string BUILD_PATH = 'build';
+
+    /**
      * The name and signature of the console command.
      *
      * @var string
@@ -61,11 +66,9 @@ class BuildCommand extends Command
         $variantLabel = $workos ? "{$kit} (WorkOS)" : $kit;
         info("Building {$variantLabel} starter kit...");
 
-        if ($kit === 'Livewire') {
-            return $this->buildLivewireKit($workos);
-        }
-
-        return $this->buildInertiaKit($kit, $workos);
+        return $kit === 'Livewire'
+            ? $this->buildLivewireKit($workos)
+            : $this->buildInertiaKit($kit, $workos);
     }
 
     /**
@@ -85,23 +88,11 @@ class BuildCommand extends Command
     }
 
     /**
-     * Build the Livewire starter kit.
+     * Prepare the build directory by cleaning and copying base files.
      */
-    protected function buildLivewireKit(bool $workos = false): int
+    protected function prepareBuildDirectory(string $basePath): string
     {
-        info('Livewire kit build is not implemented yet.');
-
-        return self::SUCCESS;
-    }
-
-    /**
-     * Build an Inertia starter kit (React or Vue).
-     */
-    protected function buildInertiaKit(string $kit, bool $workos = false): int
-    {
-        $buildPath = base_path('build');
-        $basePath = base_path('kits/Inertia/Base');
-        $kitPath = base_path("kits/Inertia/{$kit}");
+        $buildPath = base_path(self::BUILD_PATH);
 
         if (File::exists($buildPath)) {
             File::deleteDirectory($buildPath);
@@ -111,8 +102,47 @@ class BuildCommand extends Command
         info('Copying Base kit files...');
         File::copyDirectory($basePath, $buildPath);
 
+        return $buildPath;
+    }
+
+    /**
+     * Finalize the build by writing metadata and showing success message.
+     */
+    protected function finalizeBuild(string $buildPath, string $kit, bool $workos): int
+    {
+        $this->writeStarterKitFile($buildPath, $kit, $workos);
+        $this->deleteDatabaseFile($buildPath);
+
+        $variantLabel = $workos ? "{$kit} (WorkOS)" : $kit;
+        info("{$variantLabel} starter kit built successfully in the 'build' folder.");
+        info("Run './run-kit.sh' to start the development server.");
+
+        return self::SUCCESS;
+    }
+
+    /**
+     * Build the Livewire starter kit.
+     */
+    protected function buildLivewireKit(bool $workos = false): int
+    {
+        $buildPath = $this->prepareBuildDirectory(base_path('kits/Livewire/Base'));
+
+        if ($workos) {
+            $this->applyWorkosVariant($buildPath, 'Livewire');
+        }
+
+        return $this->finalizeBuild($buildPath, 'Livewire', $workos);
+    }
+
+    /**
+     * Build an Inertia starter kit (React or Vue).
+     */
+    protected function buildInertiaKit(string $kit, bool $workos = false): int
+    {
+        $buildPath = $this->prepareBuildDirectory(base_path('kits/Inertia/Base'));
+
         info("Copying {$kit} kit files...");
-        File::copyDirectory($kitPath, $buildPath);
+        File::copyDirectory(base_path("kits/Inertia/{$kit}"), $buildPath);
 
         if ($workos) {
             $this->applyWorkosVariant($buildPath, $kit);
@@ -124,15 +154,7 @@ class BuildCommand extends Command
         info('Replacing variant placeholders...');
         $this->replaceVariantPlaceholder($buildPath, strtolower($kit));
 
-        $this->writeStarterKitFile($buildPath, $kit, $workos);
-
-        $this->deleteDatabaseFile($buildPath);
-
-        $variantLabel = $workos ? "{$kit} (WorkOS)" : $kit;
-        info("{$variantLabel} starter kit built successfully in the 'build' folder.");
-        info("Run './run-kit.sh' to start the development server.");
-
-        return self::SUCCESS;
+        return $this->finalizeBuild($buildPath, $kit, $workos);
     }
 
     /**
@@ -205,14 +227,21 @@ class BuildCommand extends Command
      */
     protected function applyWorkosVariant(string $buildPath, string $kit): void
     {
-        $workosBasePath = base_path('kits/Inertia/WorkOS/Base');
-        $workosKitPath = base_path("kits/Inertia/WorkOS/{$kit}");
+        if ($kit === 'Livewire') {
+            $workosPath = base_path('kits/Livewire/WorkOS');
 
-        info('Copying WorkOS Base files...');
-        File::copyDirectory($workosBasePath, $buildPath);
+            info('Copying WorkOS files...');
+            File::copyDirectory($workosPath, $buildPath);
+        } else {
+            $workosBasePath = base_path('kits/Inertia/WorkOS/Base');
+            $workosKitPath = base_path("kits/Inertia/WorkOS/{$kit}");
 
-        info("Copying WorkOS {$kit} files...");
-        File::copyDirectory($workosKitPath, $buildPath);
+            info('Copying WorkOS Base files...');
+            File::copyDirectory($workosBasePath, $buildPath);
+
+            info("Copying WorkOS {$kit} files...");
+            File::copyDirectory($workosKitPath, $buildPath);
+        }
 
         info('Removing ignored files for WorkOS variant...');
         $this->removeIgnoredFiles($buildPath, $kit);
@@ -234,7 +263,11 @@ class BuildCommand extends Command
         foreach ($ignoredPaths as $path) {
             $targetPath = $this->resolveIgnorePath($buildPath, $path, $kit);
 
-            if ($targetPath && File::exists($targetPath)) {
+            if ($targetPath === null) {
+                continue;
+            }
+
+            if (File::exists($targetPath)) {
                 if (File::isDirectory($targetPath)) {
                     File::deleteDirectory($targetPath);
                 } else {
@@ -245,12 +278,22 @@ class BuildCommand extends Command
     }
 
     /**
-     * Resolve the ignore path, converting Vue paths to React if necessary.
+     * Resolve the ignore path based on the kit type.
      */
     protected function resolveIgnorePath(string $buildPath, string $path, string $kit): ?string
     {
         $isVueFile = Str::endsWith($path, '.vue');
         $isTsFile = Str::endsWith($path, '.ts') || Str::endsWith($path, '.tsx');
+        $isJsPath = Str::startsWith($path, 'resources/js/');
+
+        if ($kit === 'Livewire') {
+            // Skip Inertia-specific paths for Livewire
+            if ($isJsPath) {
+                return null;
+            }
+
+            return $buildPath.'/'.$path;
+        }
 
         if ($kit === 'React') {
             if ($isVueFile) {
@@ -293,7 +336,7 @@ class BuildCommand extends Command
 
 PHP;
 
-        $content = preg_replace('/(\];)\s*$/', $workosEntry.'$1', $content);
+        $content = preg_replace('/\n\];(\s*)$/', $workosEntry.'];$1', $content);
         File::put($servicesPath, $content);
     }
 

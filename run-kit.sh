@@ -20,6 +20,18 @@ composer setup
 
 if [ -f ".env" ]; then
     sed -i 's|APP_URL=http://localhost|APP_URL=http://localhost:8000|g' .env
+
+    # Copy WorkOS credentials from root .env if they exist
+    if [ -f "$ROOT_DIR/.env" ]; then
+        WORKOS_CLIENT_ID=$(grep -E '^WORKOS_CLIENT_ID=' "$ROOT_DIR/.env" | cut -d '=' -f2-)
+        WORKOS_API_KEY=$(grep -E '^WORKOS_API_KEY=' "$ROOT_DIR/.env" | cut -d '=' -f2-)
+
+        if [ -n "$WORKOS_CLIENT_ID" ] && [ -n "$WORKOS_API_KEY" ]; then
+            echo -e "${BLUE}Copying WorkOS credentials from root .env...${NC}"
+            sed -i "s|^WORKOS_CLIENT_ID=.*|WORKOS_CLIENT_ID=$WORKOS_CLIENT_ID|g" .env
+            sed -i "s|^WORKOS_API_KEY=.*|WORKOS_API_KEY=$WORKOS_API_KEY|g" .env
+        fi
+    fi
 fi
 
 echo -e "${GREEN}Starting development server...${NC}"

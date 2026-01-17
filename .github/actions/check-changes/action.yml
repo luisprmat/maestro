@@ -1,0 +1,27 @@
+name: 'Check for Changes'
+description: 'Check if there are any git changes in the specified path'
+
+inputs:
+  path:
+    description: 'The path to check for changes'
+    required: true
+
+outputs:
+  has_changes:
+    description: 'Whether there are changes (true/false)'
+    value: ${{ steps.changes.outputs.has_changes }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Check for Changes
+      id: changes
+      shell: bash
+      working-directory: ${{ inputs.path }}
+      run: |
+        if [[ -n "$(git status --porcelain)" ]]; then
+          echo "has_changes=true" >> $GITHUB_OUTPUT
+        else
+          echo "has_changes=false" >> $GITHUB_OUTPUT
+          echo "No changes detected, skipping PR creation."
+        fi

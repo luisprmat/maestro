@@ -2,6 +2,7 @@
 
 import chokidar from 'chokidar';
 import fs from 'fs';
+import ignore from 'ignore';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -28,7 +29,7 @@ function log(message, color = 'reset') {
 }
 
 /**
- * Watch folder mapping based on starter kit value.
+ * Kit folder mapping based on starter kit value.
  * Folders are listed in priority order (lowest to highest).
  * Higher priority folders override lower priority ones.
  */
@@ -43,6 +44,77 @@ const kitFolderMap = {
 };
 
 /**
+ * Recursively find all .gitignore files in a directory.
+ */
+function findGitignoreFiles(dir, files = []) {
+    const gitignorePath = path.join(dir, '.gitignore');
+    if (fs.existsSync(gitignorePath)) {
+        files.push(gitignorePath);
+    }
+
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+        if (entry.isDirectory() && entry.name !== 'node_modules' && entry.name !== 'vendor' && !entry.name.startsWith('.')) {
+            findGitignoreFiles(path.join(dir, entry.name), files);
+        }
+    }
+
+    return files;
+}
+
+/**
+ * Load and parse all .gitignore files from the build directory.
+ */
+function loadGitignores() {
+    const ig = ignore();
+
+    // Always ignore these files
+    ig.add([
+        '.git',
+        'composer.lock',
+        'package-lock.json',
+        'yarn.lock',
+        'pnpm-lock.yaml',
+        'bun.lockb',
+    ]);
+
+    const gitignoreFiles = findGitignoreFiles(buildDir);
+
+    for (const gitignorePath of gitignoreFiles) {
+        const content = fs.readFileSync(gitignorePath, 'utf-8');
+        const relativeDirPath = path.relative(buildDir, path.dirname(gitignorePath));
+
+        // Parse each line and prefix with the relative directory path
+        const lines = content.split('\n').map(line => {
+            line = line.trim();
+
+            // Skip empty lines and comments
+            if (!line || line.startsWith('#')) {
+                return null;
+            }
+
+            // If we're in a subdirectory, prefix the pattern
+            if (relativeDirPath) {
+                // Handle negation patterns
+                if (line.startsWith('!')) {
+                    return '!' + path.join(relativeDirPath, line.slice(1));
+                }
+                return path.join(relativeDirPath, line);
+            }
+
+            return line;
+        }).filter(Boolean);
+
+        if (lines.length > 0) {
+            ig.add(lines);
+            log(`Loaded .gitignore from ${relativeDirPath || 'root'}`, 'dim');
+        }
+    }
+
+    return ig;
+}
+
+/**
  * Read the current starter kit from the storage file.
  */
 function getStarterKit() {
@@ -52,26 +124,40 @@ function getStarterKit() {
     return fs.readFileSync(starterKitFile, 'utf-8').trim();
 }
 
-function getRelativePath(filePath, kitFolder) {
-    const kitPath = path.join(kitsDir, kitFolder);
-    return path.relative(kitPath, filePath);
+/**
+ * Get the relative path from the build directory.
+ */
+function getRelativePath(filePath) {
+    return path.relative(buildDir, filePath);
 }
 
 /**
- * Check if a file exists in any higher-priority folder.
+ * Find the highest-priority kit folder that contains the file.
+ * Returns the folder name or null if not found in any folder.
  */
-function hasOverrideInHigherPriority(relativePath, currentFolderIndex, folders) {
-    for (let i = currentFolderIndex + 1; i < folders.length; i++) {
-        const overridePath = path.join(kitsDir, folders[i], relativePath);
-        if (fs.existsSync(overridePath)) {
-            return true;
+function findSourceKitFolder(relativePath, folders) {
+    for (let i = folders.length - 1; i >= 0; i--) {
+        const kitPath = path.join(kitsDir, folders[i], relativePath);
+        if (fs.existsSync(kitPath)) {
+            return folders[i];
         }
     }
-    return false;
+    return null;
 }
 
-function copyFile(srcPath, relativePath) {
-    const destPath = path.join(buildDir, relativePath);
+/**
+ * Copy a file from build to the appropriate kit folder.
+ */
+function copyToKit(srcPath, relativePath, folders) {
+    // Find the highest-priority folder that has this file
+    let targetFolder = findSourceKitFolder(relativePath, folders);
+
+    // If no folder has this file, use the highest-priority folder
+    if (!targetFolder) {
+        targetFolder = folders[folders.length - 1];
+    }
+
+    const destPath = path.join(kitsDir, targetFolder, relativePath);
     const destDir = path.dirname(destPath);
 
     try {
@@ -79,72 +165,52 @@ function copyFile(srcPath, relativePath) {
             fs.mkdirSync(destDir, { recursive: true });
         }
         fs.copyFileSync(srcPath, destPath);
-        log(`Copied: ${relativePath}`, 'green');
+        log(`Copied: ${relativePath} -> kits/${targetFolder}`, 'green');
     } catch (error) {
         log(`Error copying ${relativePath}: ${error.message}`, 'red');
     }
 }
 
-function deleteFile(relativePath, folders) {
-    const destPath = path.join(buildDir, relativePath);
+/**
+ * Delete a file from the appropriate kit folder.
+ */
+function deleteFromKit(relativePath, folders) {
+    // Find the highest-priority folder that has this file
+    const targetFolder = findSourceKitFolder(relativePath, folders);
 
-    // Before deleting, check if any lower-priority folder has this file
-    for (let i = folders.length - 1; i >= 0; i--) {
-        const sourcePath = path.join(kitsDir, folders[i], relativePath);
-        if (fs.existsSync(sourcePath)) {
-            // Copy from the highest priority folder that has the file
-            copyFile(sourcePath, relativePath);
-            return;
-        }
+    if (!targetFolder) {
+        return;
     }
 
+    const targetPath = path.join(kitsDir, targetFolder, relativePath);
+
     try {
-        if (fs.existsSync(destPath)) {
-            fs.unlinkSync(destPath);
-            log(`Deleted: ${relativePath}`, 'yellow');
+        if (fs.existsSync(targetPath)) {
+            fs.unlinkSync(targetPath);
+            log(`Deleted: kits/${targetFolder}/${relativePath}`, 'yellow');
         }
     } catch (error) {
         log(`Error deleting ${relativePath}: ${error.message}`, 'red');
     }
 }
 
-function handleFileChange(eventType, filePath, folders) {
-    // Find which kit folder this file belongs to
-    let kitFolder = null;
-    let folderIndex = -1;
+/**
+ * Handle file change events from the build directory.
+ */
+function handleFileChange(eventType, filePath, folders, ig) {
+    const relativePath = getRelativePath(filePath);
 
-    for (let i = 0; i < folders.length; i++) {
-        const kitPath = path.join(kitsDir, folders[i]);
-        if (filePath.startsWith(kitPath + path.sep)) {
-            kitFolder = folders[i];
-            folderIndex = i;
-            break;
-        }
-    }
-
-    if (!kitFolder) {
-        return;
-    }
-
-    const relativePath = getRelativePath(filePath, kitFolder);
-
-    // Skip hidden files and directories
-    if (relativePath.split(path.sep).some(part => part.startsWith('.'))) {
+    // Skip files that match .gitignore patterns
+    if (ig.ignores(relativePath)) {
         return;
     }
 
     if (eventType === 'unlink') {
-        deleteFile(relativePath, folders);
+        deleteFromKit(relativePath, folders);
         return;
     }
 
-    // For add/change events, check if there's an override in higher-priority folders
-    if (hasOverrideInHigherPriority(relativePath, folderIndex, folders)) {
-        log(`Skipped: ${relativePath} (override exists in higher-priority folder)`, 'dim');
-        return;
-    }
-
-    copyFile(filePath, relativePath);
+    copyToKit(filePath, relativePath, folders);
 }
 
 function startWatching() {
@@ -167,23 +233,24 @@ function startWatching() {
         process.exit(1);
     }
 
-    const watchPaths = folders.map(folder => path.join(kitsDir, folder));
-
-    log(`Watching ${starterKit} kit folders:`, 'blue');
+    log(`Watching build directory for ${starterKit} kit`, 'blue');
+    log(`Changes will be copied to:`, 'blue');
     folders.forEach(folder => log(`  - kits/${folder}`, 'blue'));
 
-    const watcher = chokidar.watch(watchPaths, {
+    const ig = loadGitignores();
+
+    const watcher = chokidar.watch(buildDir, {
         ignored: /(^|[\/\\])\../, // ignore dotfiles
         persistent: true,
         ignoreInitial: true,
     });
 
     watcher
-        .on('add', filePath => handleFileChange('add', filePath, folders))
-        .on('change', filePath => handleFileChange('change', filePath, folders))
-        .on('unlink', filePath => handleFileChange('unlink', filePath, folders))
+        .on('add', filePath => handleFileChange('add', filePath, folders, ig))
+        .on('change', filePath => handleFileChange('change', filePath, folders, ig))
+        .on('unlink', filePath => handleFileChange('unlink', filePath, folders, ig))
         .on('ready', () => {
-            log('Watcher ready. Waiting for changes...', 'green');
+            log('Watcher ready. Waiting for changes in build directory...', 'green');
         })
         .on('error', error => {
             log(`Watcher error: ${error.message}`, 'red');

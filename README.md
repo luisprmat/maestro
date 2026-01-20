@@ -49,6 +49,10 @@ starter kits, so you can make changes to any of the Starter Kits.
 It streamlines the changes by replicating the changes made in the `build` folder - the Starter Kit you're running - to the
 `kits` folder where the files for the different Starter Kits live.
 
+## Contributing
+
+To contribute changes to any of the starter kits, you need to build and run the one you want to update.
+
 ### Building a starter kit
 
 Use this command to build:
@@ -80,3 +84,9 @@ composer kit:run
 
 This will start both the development server and a file watcher that automatically copies changes from the `build`
 folder to the correct `kits` ones.
+
+### Submitting changes
+
+After making the changes and testing that they are working, **Maestro** already copied the changes to the `kits` folder,
+so you just need to commit and create a PR with these changes, after your PR is merged, **Maestro** will create PRs for
+the needed starter kits based in the changes that were applied.

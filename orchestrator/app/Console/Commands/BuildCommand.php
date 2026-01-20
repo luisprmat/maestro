@@ -338,12 +338,6 @@ class BuildCommand extends Command
             info("Copying WorkOS {$kit} files...");
             File::copyDirectory($workosKitPath, $buildPath);
         }
-
-        info('Adding WorkOS service configuration...');
-        $this->addWorkosServiceConfig($buildPath);
-
-        info('Adding WorkOS environment variables...');
-        $this->addWorkosEnvVariables($buildPath);
     }
 
     /**
@@ -431,33 +425,6 @@ class BuildCommand extends Command
     }
 
     /**
-     * Add the WorkOS service configuration to services.php.
-     */
-    protected function addWorkosServiceConfig(string $buildPath): void
-    {
-        $servicesPath = $buildPath.'/config/services.php';
-
-        if (! File::exists($servicesPath)) {
-            return;
-        }
-
-        $content = File::get($servicesPath);
-
-        $workosEntry = <<<'PHP'
-
-    'workos' => [
-        'client_id' => env('WORKOS_CLIENT_ID'),
-        'secret' => env('WORKOS_API_KEY'),
-        'redirect_url' => env('WORKOS_REDIRECT_URL'),
-    ],
-
-PHP;
-
-        $content = preg_replace('/\n\];(\s*)$/', $workosEntry.'];$1', $content);
-        File::put($servicesPath, $content);
-    }
-
-    /**
      * Write the starter kit identifier file.
      */
     protected function writeStarterKitFile(string $kit, bool $workos, bool $components = false, bool $blank = false): void
@@ -471,36 +438,6 @@ PHP;
         };
 
         Storage::disk('local')->put('starter_kit', $starterKit);
-    }
-
-    /**
-     * Add WorkOS environment variables to .env.example.
-     */
-    protected function addWorkosEnvVariables(string $buildPath): void
-    {
-        $envExamplePath = $buildPath.'/.env.example';
-
-        if (! File::exists($envExamplePath)) {
-            return;
-        }
-
-        $content = File::get($envExamplePath);
-
-        $workosEnv = <<<'ENV'
-WORKOS_CLIENT_ID=
-WORKOS_API_KEY=
-WORKOS_REDIRECT_URL="${APP_URL}/authenticate"
-
-
-ENV;
-
-        $content = preg_replace(
-            '/AWS_ACCESS_KEY_ID=/',
-            $workosEnv.'AWS_ACCESS_KEY_ID=',
-            $content
-        );
-
-        File::put($envExamplePath, $content);
     }
 
     /**

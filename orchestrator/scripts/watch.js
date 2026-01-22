@@ -118,6 +118,23 @@ function restorePlaceholders(content, kitType, uiComponents) {
 }
 
 /**
+ * Restore variant placeholder in composer.json name field.
+ * This reverses the variant replacement for Inertia kits.
+ */
+function restoreComposerVariant(content, kitType) {
+    if (!kitType) {
+        return content;
+    }
+
+    // Replace the variant (react/vue) back with {{variant}} in the name field
+    // Handles patterns like "laravel/react-starter-kit" or "laravel/blank-react-starter-kit"
+    return content.replace(
+        new RegExp(`"name":\\s*"(laravel/(?:blank-)?)${kitType}(-starter-kit)"`, 'g'),
+        '"name": "$1{{variant}}$2"'
+    );
+}
+
+/**
  * Recursively find all .gitignore files in a directory.
  */
 function findGitignoreFiles(dir, files = []) {
@@ -219,6 +236,10 @@ function findSourceKitFolder(relativePath, folders) {
     return null;
 }
 
+function isInertiaKit(targetFolder) {
+    return targetFolder.startsWith('Inertia/');
+}
+
 /**
  * Copy a file from build to the appropriate kit folder.
  * Restores placeholders for files in placeholder paths.
@@ -248,6 +269,18 @@ function copyToKit(srcPath, relativePath, folders, kitType, uiComponents) {
             if (content !== restoredContent) {
                 fs.writeFileSync(destPath, restoredContent);
                 log(`Copied (placeholders restored): ${relativePath} -> kits/${targetFolder}`, 'green');
+                return;
+            }
+        }
+
+        // Check if we need to restore variant placeholder in composer.json for Inertia kits
+        if (kitType && relativePath === 'composer.json' && isInertiaKit(targetFolder)) {
+            const content = fs.readFileSync(srcPath, 'utf-8');
+            const restoredContent = restoreComposerVariant(content, kitType);
+
+            if (content !== restoredContent) {
+                fs.writeFileSync(destPath, restoredContent);
+                log(`Copied (variant restored): ${relativePath} -> kits/${targetFolder}`, 'green');
                 return;
             }
         }

@@ -1,5 +1,8 @@
 <?php
 
+use Pest\Browser\Api\AwaitableWebpage;
+use Pest\Browser\Api\Webpage;
+
 /*
 |--------------------------------------------------------------------------
 | Test Case
@@ -41,7 +44,13 @@ expect()->extend('toBeOne', function () {
 |
 */
 
-function something()
+function visitPasswordProtectedPage(string $route, string $password = 'password'): AwaitableWebpage|Webpage
 {
-    // ..
+    $destinationUrl = route($route);
+
+    return visit($destinationUrl)
+        ->assertSee('Confirm password')
+        ->fill('password', $password)
+        ->press('@confirm-password-button')
+        ->assertUrlIs($destinationUrl);
 }
